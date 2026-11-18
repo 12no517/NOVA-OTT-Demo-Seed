@@ -33,6 +33,24 @@ LAST = ["Sharma", "Verma", "Singh", "Gupta", "Mehta", "Agarwal", "Patel", "Reddy
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 LOCAL_POSTER_DIR = PROJECT_ROOT / "static" / "uploads" / "posters"
+POSTER_MAP_FILE = PROJECT_ROOT / "instance" / "poster_map.json"
+
+
+def read_poster_map():
+    try:
+        if POSTER_MAP_FILE.exists():
+            data = json.loads(POSTER_MAP_FILE.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"[poster warning] Could not read poster map: {exc}")
+    return {}
+
+
+def write_poster_map(data):
+    POSTER_MAP_FILE.parent.mkdir(parents=True, exist_ok=True)
+    temporary = POSTER_MAP_FILE.with_suffix(".json.tmp")
+    temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(temporary, POSTER_MAP_FILE)
 
 
 def cache_poster_image(remote_url, tmdb_id=None):
@@ -67,21 +85,34 @@ def cache_poster_image(remote_url, tmdb_id=None):
 
 
 def migrate_existing_remote_posters(cur, db):
-    """Localize TMDB image URLs already inserted by earlier seeder runs."""
-    cur.execute("SELECT Content_ID, Poster_URL, TMDB_ID FROM Content_Posters "
-                "WHERE Poster_Source='tmdb' AND Poster_URL LIKE 'https://image.tmdb.org/%'")
-    rows = cur.fetchall()
-    migrated = 0
-    for content_id, poster_url, tmdb_id in rows:
-        local_url = cache_poster_image(poster_url, tmdb_id)
-        if local_url and local_url != poster_url:
-            cur.execute("UPDATE Content_Posters SET Poster_URL=%s WHERE Content_ID=%s", (local_url, content_id))
-            migrated += 1
-        if migrated and migrated % 25 == 0:
-            db.commit()
-    db.commit()
-    print(f"Localized {migrated} existing TMDB poster links into the NOVA static folder.")
+    """Import mappings from a prior optional table, without modifying MySQL."""
+    try:
+        cur.execute("SHOW TABLES LIKE 'Content_Posters'")
+        if not cur.fetchone():
+            print("No legacy Content_Posters table found; the original NOVA schema remains unchanged.")
+            return
+        cur.execute("SELECT Content_ID, Poster_URL, Poster_Source, TMDB_ID FROM Content_Posters")
+        rows = cur.fetchall()
+    except mysql.connector.Error as exc:
+        print(f"[poster warning] Could not read legacy poster mappings: {exc}")
+        return
 
+    poster_map = read_poster_map()
+    migrated = 0
+    for content_id, poster_url, source, tmdb_id in rows:
+        if not poster_url:
+            continue
+        if str(poster_url).startswith("https://image.tmdb.org/"):
+            poster_url = cache_poster_image(poster_url, tmdb_id)
+        poster_map[str(int(content_id))] = {
+            "Poster_URL": poster_url,
+            "Poster_Source": source or "tmdb",
+            "TMDB_ID": tmdb_id,
+        }
+        migrated += 1
+    if migrated:
+        write_poster_map(poster_map)
+    print(f"Imported {migrated} legacy poster mappings into instance/poster_map.json; MySQL schema was not changed.")
 
 
 def make_password_hash(password):
@@ -161,6 +192,7 @@ def seed_movies(cur, genre_map, db):
     inserted = 0
     scanned = 0
     processed = 0
+    poster_map = read_poster_map()
     for page in range(1, 501):
         payload = tmdb_get("/discover/movie", {
             "include_adult": "false",
@@ -206,14 +238,11 @@ def seed_movies(cur, genre_map, db):
             poster_path = movie.get("poster_path")
             if poster_path:
                 poster_url = cache_poster_image("https://image.tmdb.org/t/p/w342" + poster_path, movie.get("id"))
-                cur.execute(
-                    "INSERT INTO Content_Posters "
-                    "(Content_ID, Poster_URL, Poster_Source, TMDB_ID) "
-                    "VALUES (%s,%s,'tmdb',%s) "
-                    "ON DUPLICATE KEY UPDATE Poster_URL=VALUES(Poster_URL), "
-                    "Poster_Source='tmdb', TMDB_ID=VALUES(TMDB_ID)",
-                    (content_id, poster_url, movie.get("id")),
-                )
+                poster_map[str(int(content_id))] = {
+                    "Poster_URL": poster_url,
+                    "Poster_Source": "tmdb",
+                    "TMDB_ID": movie.get("id"),
+                }
 
             for tmdb_genre_id in movie.get("genre_ids", []):
                 genre_id = genre_map.get(int(tmdb_genre_id))
@@ -224,6 +253,7 @@ def seed_movies(cur, genre_map, db):
                     )
 
         db.commit()
+        write_poster_map(poster_map)
         print(f"TMDB page {page} processed | catalogue rows refreshed: {processed}/{MOVIE_TARGET} | newly inserted: {inserted}")
         if processed >= MOVIE_TARGET or page >= int(payload.get("total_pages", 500)):
             break
@@ -242,15 +272,6 @@ def main():
         # Fail early with a clear message if the main project schema is not installed.
         for table in ("Users", "Profiles", "Content", "Genres", "Content_Genres"):
             cur.execute(f"SELECT 1 FROM {table} LIMIT 1")
-        cur.execute(
-            "CREATE TABLE IF NOT EXISTS Content_Posters ("
-            "Content_ID INT PRIMARY KEY, Poster_URL VARCHAR(1000) NOT NULL, "
-            "Poster_Source VARCHAR(30) NOT NULL DEFAULT 'manual_url', TMDB_ID BIGINT NULL, "
-            "Updated_At TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, "
-            "FOREIGN KEY (Content_ID) REFERENCES Content(Content_ID) ON DELETE CASCADE)"
-        )
-        db.commit()
-
         print("Creating or completing the 500 synthetic demo users...")
         users_added, profiles_added = seed_users(cur)
         db.commit()
@@ -265,13 +286,12 @@ def main():
         total_demo_users = cur.fetchone()[0]
         cur.execute("SELECT COUNT(*) FROM Content WHERE Type='Movie'")
         total_movies = cur.fetchone()[0]
-        cur.execute(
-            "SELECT COUNT(*) FROM Content c JOIN Content_Posters p ON p.Content_ID=c.Content_ID "
-            "WHERE c.Type='Movie'"
+        poster_map = read_poster_map()
+        total_posters = sum(1 for value in poster_map.values() if value.get("Poster_URL"))
+        local_posters = sum(
+            1 for value in poster_map.values()
+            if str(value.get("Poster_URL", "")).startswith("/static/uploads/posters/")
         )
-        total_posters = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM Content_Posters cp JOIN Content c ON c.Content_ID=cp.Content_ID WHERE c.Type='Movie' AND cp.Poster_URL LIKE '/static/uploads/posters/%'")
-        local_posters = cur.fetchone()[0]
         print("\nSEED COMPLETE")
         print(f"New demo users: {users_added}; total demo users: {total_demo_users}")
         print(f"New profiles: {profiles_added}")
