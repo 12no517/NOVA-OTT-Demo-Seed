@@ -49,7 +49,7 @@ The script reads the NOVA project's `.env` file from the parent folder.
 
 - Up to 1,000 movies from TMDB Discover, including titles, descriptions, release years, language, genre links and poster URLs.
 - 500 synthetic users with one profile each.
-- A `Content_Posters` table if it does not already exist.
+- Poster metadata in the local `instance/poster_map.json` file and downloaded artwork in `static/uploads/posters/`; no new MySQL table or column is created.
 
 Existing demo emails and matching title/year/movie records are reused or skipped. The script does not drop the database or delete existing records. It is safe to rerun to fill missing records.
 
