@@ -28,22 +28,22 @@ Never commit `.env` or share real credentials.
 
 ## One-command import
 
-Place this repository inside your NOVA OTT project folder as `tools_demo_data`, or copy its `seed.py`, `requirements.txt`, and README into that folder.
-
-From the NOVA OTT project root, run:
+From the NOVA OTT project root, clone this repository into the expected folder, install the dependencies, and run the importer:
 
 ```bash
-python3 -m pip install -r tools_demo_data/requirements.txt && python3 tools_demo_data/seed.py
+git clone https://github.com/12no517/NOVA-OTT-Demo-Seed.git tools_demo_data && python3 -m pip install -r tools_demo_data/requirements.txt && python3 tools_demo_data/seed.py
 ```
 
-If using a virtual environment, activate it first:
+If the folder already exists, update it first or remove only that cloned `tools_demo_data` folder before running the clone command again. Do not remove your project folder or database.
+
+With a virtual environment, activate it first:
 
 ```bash
 source .venv/bin/activate
-python3 -m pip install -r tools_demo_data/requirements.txt && python3 tools_demo_data/seed.py
+git clone https://github.com/12no517/NOVA-OTT-Demo-Seed.git tools_demo_data && python3 -m pip install -r tools_demo_data/requirements.txt && python3 tools_demo_data/seed.py
 ```
 
-The script reads `.env` from the project root (one directory above `tools_demo_data`).
+The script reads the NOVA project's `.env` file from the parent folder.
 
 ## What it inserts
 
@@ -51,7 +51,7 @@ The script reads `.env` from the project root (one directory above `tools_demo_d
 - 500 synthetic users with one profile each.
 - A `Content_Posters` table if it does not already exist.
 
-Existing demo emails and matching title/year/movie records are skipped. The script does not drop the database or delete existing records. It is safe to rerun to fill missing records.
+Existing demo emails and matching title/year/movie records are reused or skipped. The script does not drop the database or delete existing records. It is safe to rerun to fill missing records.
 
 ## Demo accounts
 
@@ -62,21 +62,7 @@ These are shared test credentials. Do not use them on a public production deploy
 
 ## Verify
 
-```sql
-USE Netflix_OTT;
-SELECT COUNT(*) AS demo_users
-FROM Users
-WHERE Email LIKE 'nova.demo.user%@example.com';
-
-SELECT COUNT(*) AS movies
-FROM Content
-WHERE Type='Movie';
-
-SELECT COUNT(*) AS movies_with_posters
-FROM Content c
-JOIN Content_Posters p ON p.Content_ID=c.Content_ID
-WHERE c.Type='Movie';
-```
+Run the queries in [verify.sql](verify.sql) in MySQL Workbench or the MySQL client.
 
 ## TMDB
 
