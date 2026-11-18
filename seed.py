@@ -160,6 +160,7 @@ def seed_users(cur):
 def seed_movies(cur, genre_map, db):
     inserted = 0
     scanned = 0
+    processed = 0
     for page in range(1, 501):
         payload = tmdb_get("/discover/movie", {
             "include_adult": "false",
@@ -173,12 +174,13 @@ def seed_movies(cur, genre_map, db):
         if not movies:
             break
         for movie in movies:
-            if inserted >= MOVIE_TARGET:
+            if processed >= MOVIE_TARGET:
                 break
             scanned += 1
             title = (movie.get("title") or movie.get("original_title") or "").strip()[:150]
             if not title:
                 continue
+            processed += 1
             raw_year = (movie.get("release_date") or "")[:4]
             year = int(raw_year) if raw_year.isdigit() and 1901 <= int(raw_year) <= 2155 else None
             description = (movie.get("overview") or "No synopsis available.").strip()
@@ -222,8 +224,8 @@ def seed_movies(cur, genre_map, db):
                     )
 
         db.commit()
-        print(f"TMDB page {page} processed | new movies: {inserted}/{MOVIE_TARGET}")
-        if inserted >= MOVIE_TARGET or page >= int(payload.get("total_pages", 500)):
+        print(f"TMDB page {page} processed | catalogue rows refreshed: {processed}/{MOVIE_TARGET} | newly inserted: {inserted}")
+        if processed >= MOVIE_TARGET or page >= int(payload.get("total_pages", 500)):
             break
     return inserted, scanned
 
