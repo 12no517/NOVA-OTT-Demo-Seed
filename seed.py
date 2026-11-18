@@ -105,7 +105,7 @@ def seed_users(cur):
     return new_users, new_profiles
 
 
-def seed_movies(cur, genre_map):
+def seed_movies(cur, genre_map, db):
     inserted = 0
     scanned = 0
     for page in range(1, 501):
@@ -169,7 +169,7 @@ def seed_movies(cur, genre_map):
                         (content_id, genre_id),
                     )
 
-        cur.connection.commit()
+        db.commit()
         print(f"TMDB page {page} processed | new movies: {inserted}/{MOVIE_TARGET}")
         if inserted >= MOVIE_TARGET or page >= int(payload.get("total_pages", 500)):
             break
@@ -204,7 +204,7 @@ def main():
         print("Fetching TMDB genres and movie catalogue...")
         genre_map = ensure_genres(cur)
         db.commit()
-        movies_added, scanned = seed_movies(cur, genre_map)
+        movies_added, scanned = seed_movies(cur, genre_map, db)
 
         cur.execute("SELECT COUNT(*) FROM Users WHERE Email LIKE 'nova.demo.user%@example.com'")
         total_demo_users = cur.fetchone()[0]
