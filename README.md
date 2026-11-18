@@ -70,4 +70,4 @@ Requires internet access to `api.themoviedb.org` and `image.tmdb.org`. TMDB data
 
 ## Reliable poster display
 
-The seeder downloads TMDB artwork into the NOVA project's `static/uploads/posters/` folder and stores same-origin `/static/uploads/posters/...` paths in `Content_Posters`. It also migrates existing remote `image.tmdb.org` links into local files when rerun. The movie refresh pass processes the first 1,000 catalogue results even if those titles already exist, so it refreshes poster mappings rather than inserting duplicates only.
+The seeder downloads TMDB artwork into the NOVA project's `static/uploads/posters/` folder and stores same-origin `/static/uploads/posters/...` paths in `instance/poster_map.json`, outside MySQL. If a previous version created the optional `Content_Posters` table, the seeder only reads its records to migrate mappings to JSON; it does not create, update, alter, or drop that table. The movie refresh pass processes the first 1,000 catalogue results even if those titles already exist, so it refreshes poster mappings rather than inserting duplicates only.
