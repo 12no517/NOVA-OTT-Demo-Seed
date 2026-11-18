@@ -31,6 +31,58 @@ DEMO_PASSWORD = os.getenv("NOVA_DEMO_USER_PASSWORD", "NovaDemo@2026")
 FIRST = ["Aarav", "Vivaan", "Aditya", "Arjun", "Ishaan", "Kabir", "Reyansh", "Ayaan", "Rohan", "Krishna", "Ananya", "Diya", "Aadhya", "Ira", "Kiara", "Meera", "Saanvi", "Myra", "Priya", "Sara", "Neha", "Riya", "Tara", "Zoya", "Nisha"]
 LAST = ["Sharma", "Verma", "Singh", "Gupta", "Mehta", "Agarwal", "Patel", "Reddy", "Nair", "Kapoor", "Malhotra", "Iyer", "Joshi", "Khan", "Das", "Rao", "Chopra", "Bose", "Mishra", "Jain"]
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+LOCAL_POSTER_DIR = PROJECT_ROOT / "static" / "uploads" / "posters"
+
+
+def cache_poster_image(remote_url, tmdb_id=None):
+    """Download TMDB artwork locally so browsers load it from NOVA itself."""
+    if not remote_url or not str(remote_url).startswith("https://image.tmdb.org/t/p/"):
+        return remote_url
+    LOCAL_POSTER_DIR.mkdir(parents=True, exist_ok=True)
+    key = str(tmdb_id) if tmdb_id else hashlib.sha1(remote_url.encode("utf-8")).hexdigest()[:18]
+    filename = f"tmdb_{key}.jpg"
+    destination = LOCAL_POSTER_DIR / filename
+    if destination.exists() and destination.stat().st_size > 1200:
+        return f"/static/uploads/posters/{filename}"
+    request_obj = urllib.request.Request(remote_url, headers={
+        "User-Agent": "Mozilla/5.0 NOVA-OTT-Demo-Seeder/1.0",
+        "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+    })
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(request_obj, timeout=20) as response:
+                content_type = response.headers.get("Content-Type", "").lower()
+                image_data = response.read(8 * 1024 * 1024 + 1)
+            if len(image_data) > 8 * 1024 * 1024 or len(image_data) < 1200 or not content_type.startswith("image/"):
+                return remote_url
+            destination.write_bytes(image_data)
+            return f"/static/uploads/posters/{filename}"
+        except Exception as exc:
+            if attempt == 2:
+                print(f"  [poster warning] Could not cache poster {tmdb_id or remote_url}: {exc}")
+            else:
+                time.sleep(1.5 * (attempt + 1))
+    return remote_url
+
+
+def migrate_existing_remote_posters(cur, db):
+    """Localize TMDB image URLs already inserted by earlier seeder runs."""
+    cur.execute("SELECT Content_ID, Poster_URL, TMDB_ID FROM Content_Posters "
+                "WHERE Poster_Source='tmdb' AND Poster_URL LIKE 'https://image.tmdb.org/%'")
+    rows = cur.fetchall()
+    migrated = 0
+    for content_id, poster_url, tmdb_id in rows:
+        local_url = cache_poster_image(poster_url, tmdb_id)
+        if local_url and local_url != poster_url:
+            cur.execute("UPDATE Content_Posters SET Poster_URL=%s WHERE Content_ID=%s", (local_url, content_id))
+            migrated += 1
+        if migrated and migrated % 25 == 0:
+            db.commit()
+    db.commit()
+    print(f"Localized {migrated} existing TMDB poster links into the NOVA static folder.")
+
+
 
 def make_password_hash(password):
     salt = secrets.token_hex(16)
@@ -151,7 +203,7 @@ def seed_movies(cur, genre_map, db):
 
             poster_path = movie.get("poster_path")
             if poster_path:
-                poster_url = "https://image.tmdb.org/t/p/w500" + poster_path
+                poster_url = cache_poster_image("https://image.tmdb.org/t/p/w342" + poster_path, movie.get("id"))
                 cur.execute(
                     "INSERT INTO Content_Posters "
                     "(Content_ID, Poster_URL, Poster_Source, TMDB_ID) "
@@ -204,6 +256,7 @@ def main():
         print("Fetching TMDB genres and movie catalogue...")
         genre_map = ensure_genres(cur)
         db.commit()
+        migrate_existing_remote_posters(cur, db)
         movies_added, scanned = seed_movies(cur, genre_map, db)
 
         cur.execute("SELECT COUNT(*) FROM Users WHERE Email LIKE 'nova.demo.user%@example.com'")
@@ -215,11 +268,14 @@ def main():
             "WHERE c.Type='Movie'"
         )
         total_posters = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM Content_Posters cp JOIN Content c ON c.Content_ID=cp.Content_ID WHERE c.Type='Movie' AND cp.Poster_URL LIKE '/static/uploads/posters/%'")
+        local_posters = cur.fetchone()[0]
         print("\nSEED COMPLETE")
         print(f"New demo users: {users_added}; total demo users: {total_demo_users}")
         print(f"New profiles: {profiles_added}")
         print(f"New movies: {movies_added}; total movies in database: {total_movies}")
         print(f"Movies with posters: {total_posters}; TMDB rows scanned: {scanned}")
+        print(f"Movies with locally cached poster images: {local_posters}")
         print("Demo email range: nova.demo.user001@example.com to nova.demo.user500@example.com")
         print(f"Demo password: {DEMO_PASSWORD}")
         print("Set NOVA_DEMO_USER_PASSWORD in .env before running to use a different password.")
