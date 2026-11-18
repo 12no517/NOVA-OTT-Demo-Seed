@@ -67,3 +67,7 @@ Run the queries in [verify.sql](verify.sql) in MySQL Workbench or the MySQL clie
 ## TMDB
 
 Requires internet access to `api.themoviedb.org` and `image.tmdb.org`. TMDB data and images are subject to its terms and attribution requirements: https://www.themoviedb.org/terms-of-use
+
+## Reliable poster display
+
+The seeder downloads TMDB artwork into the NOVA project's `static/uploads/posters/` folder and stores same-origin `/static/uploads/posters/...` paths in `Content_Posters`. It also migrates existing remote `image.tmdb.org` links into local files when rerun. The movie refresh pass processes the first 1,000 catalogue results even if those titles already exist, so it refreshes poster mappings rather than inserting duplicates only.
